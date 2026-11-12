@@ -1,0 +1,19 @@
+# Web API
+Django==6.0.6
+djangorestframework==3.17.1
+requests==2.34.2
+
+# Data and machine learning
+pandas==3.0.3
+numpy==2.4.4
+scikit-learn==1.9.1
+# CPU build is enough for this LSTM. Install with:
+#   pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0
+
+# Only needed to rebuild the map layers (scripts/build_geo.py)
+pyshp==3.1.8
+shapely==2.2.0
+
+# Optional: PostgreSQL instead of SQLite
+# psycopg[binary]
