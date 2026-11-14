@@ -80,7 +80,51 @@ export type Status = {
   source: string;
 };
 
-async function get<T>(path: string, params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<T> {
+// The hosted demo has no Django server. It is built with NEXT_PUBLIC_STATIC_DATA=1
+// and reads JSON files saved by `manage.py export_static` from /data instead.
+const STATIC = process.env.NEXT_PUBLIC_STATIC_DATA === "1";
+
+/** Prefix for files in public/ when the site is served from a sub-path (GitHub Pages). */
+export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
+type Params = Record<string, string | number | undefined>;
+
+/** 'Tamil Nadu' -> 'tamil-nadu'. Same rule as slug() in export_static.py. */
+const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+/** Which saved file answers this API call. Mirrors the layout written by export_static. */
+function staticFile(path: string, params: Params): string {
+  const folder = params.commodity ? slug(String(params.commodity)) : "";
+  if (path === "dates" || path === "groups") return `${folder}/${path}.json`;
+  if (path === "map") return `${folder}/map/${params.date}.json`;
+  if (path === "series") {
+    if (params.market_id !== undefined) return `${folder}/series/market/${params.market_id}.json`;
+    if (params.state) return `${folder}/series/state/${slug(String(params.state))}.json`;
+    return `${folder}/series/india.json`;
+  }
+  if (path === "forecast") {
+    return params.state ? `${folder}/forecast/state/${slug(String(params.state))}.json` : `${folder}/forecast/india.json`;
+  }
+  return `${path}.json`; // status, models, commodities
+}
+
+async function getStatic<T>(path: string, params: Params, signal?: AbortSignal): Promise<T> {
+  // A map without a date means "latest day": look it up in dates.json first.
+  if (path === "map" && !params.date) {
+    const days = await getStatic<DayCount[]>("dates", { commodity: params.commodity }, signal);
+    params = { ...params, date: days[days.length - 1]?.date };
+  }
+  const res = await fetch(`${BASE_PATH}/data/${staticFile(path, params)}`, { signal });
+  if (res.ok) return res.json() as Promise<T>;
+  // Not every state has a forecast; the API answers "not available" rather than an error.
+  if (path === "forecast") {
+    return { commodity: params.commodity, state: params.state ?? "", available: false, points: [] } as T;
+  }
+  throw new Error(`${path}: not in the demo snapshot`);
+}
+
+async function get<T>(path: string, params: Params = {}, signal?: AbortSignal): Promise<T> {
+  if (STATIC) return getStatic<T>(path, params, signal);
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
   const res = await fetch(`/api/${path}${q.size ? `?${q}` : ""}`, { signal });

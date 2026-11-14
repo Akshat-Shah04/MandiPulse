@@ -2,7 +2,7 @@
 
 import { geoGraticule10, geoMercator, geoPath, type GeoPermissibleObjects } from "d3-geo";
 import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { binFor, GROUP_COLOURS, kg, pctChange, qtl, type MarketPrice, type PriceMap, type StatePrice } from "@/lib/api";
+import { BASE_PATH, binFor, GROUP_COLOURS, kg, pctChange, qtl, type MarketPrice, type PriceMap, type StatePrice } from "@/lib/api";
 
 export type ColourMode = "price" | "group";
 
@@ -149,7 +149,7 @@ export default function IndiaMap({
   const lastTipKey = useRef<string>("");
 
   useEffect(() => {
-    fetch("/geo/india_states.geojson")
+    fetch(`${BASE_PATH}/geo/india_states.geojson`)
       .then((r) => r.json())
       .then(setGeo)
       .catch(() => setGeo(null));
