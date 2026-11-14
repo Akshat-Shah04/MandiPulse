@@ -17,10 +17,18 @@ forecast is a mix - and it is never worse than "price stays the same".
 
 The 80% band around each forecast comes from the test errors: 8 in 10
 past forecasts landed inside a band that wide.
+
+TWO LEVELS
+----------
+All of this runs twice: once on India + state median prices, and once on
+single mandis that report most days. Mandi prices jump around much more,
+so they get their own model choice, their own (wider) bands and their own
+accuracy table, instead of borrowing the state numbers.
 """
 
 import json
 import math
+import random
 from datetime import timedelta
 
 import numpy as np
@@ -32,9 +40,13 @@ from prices.models import Forecast, ModelScore
 
 from .examples import FORECAST_DAYS, has_all_answers, make_examples
 from .models import all_models
-from .series import load_series
+from .series import load_mandi_series, load_series
 
 TEST_DAYS = 42  # six weeks of forecast start-days are used for testing
+RANDOM_SEED = 7
+
+# Cap on mandi training examples (see sample()). Every test example is still scored.
+MAX_MANDI_TRAIN_EXAMPLES = 40_000
 
 
 def split_train_test(examples):
@@ -84,19 +96,36 @@ def log_errors(test, predictions, h):
     return errors
 
 
-def run(commodities=None, log=print):
-    series_list = load_series(commodities)
-    if not series_list:
-        raise ValueError("No series with enough history yet")
+def sample(examples, limit, seed=RANDOM_SEED):
+    """
+    At most `limit` examples, picked at random (same pick every run).
+    Mandi data gives ~10x more examples than state data; the random forest
+    would take hours on all of them, and a sample learns nearly as well.
+    """
+    if limit is None or len(examples) <= limit:
+        return examples
+    rng = random.Random(seed)
+    return rng.sample(examples, limit)
+
+
+def forecast_level(series_list, level, log=print, max_train=None):
+    """
+    Back-test every model on one set of series, pick the best per day ahead,
+    and forecast the next 14 days for each series.
+
+    `level` is "state" (all-India and state medians) or "mandi" (single mandis).
+    Returns (score rows, forecast rows, report section). Nothing is saved here.
+    """
     examples = make_examples(series_list)
     train, test = split_train_test(examples)
-    log(f"{len(series_list)} series, {len(train)} training examples, {len(test)} test examples")
+    train = sample(train, max_train)
+    log(f"[{level}] {len(series_list)} series, {len(train)} training examples, {len(test)} test examples")
 
     # ---- 1. back-test every model
     models = all_models()
     results = {}  # model name -> {"scores": [...], "predictions": array}
     for model in models:
-        log(f"testing {model.name} ...")
+        log(f"[{level}] testing {model.name} ...")
         model.train(train)
         predictions = model.predict(test)
         results[model.name] = {"scores": score_predictions(test, predictions), "predictions": predictions}
@@ -106,7 +135,7 @@ def run(commodities=None, log=print):
     for h in range(FORECAST_DAYS):
         best = min(results, key=lambda name: results[name]["scores"][h]["mae"])
         best_for_day.append(best)
-    log("best model per day ahead: " + ", ".join(f"{h + 1}:{m}" for h, m in enumerate(best_for_day)))
+    log(f"[{level}] best model per day ahead: " + ", ".join(f"{h + 1}:{m}" for h, m in enumerate(best_for_day)))
 
     # ---- 3. size of the 80% band for each day ahead, from the chosen model's test errors
     band_low, band_high = [], []
@@ -116,11 +145,11 @@ def run(commodities=None, log=print):
         band_high.append(float(np.quantile(errors, 0.90)))
 
     # ---- 4. retrain the chosen models on ALL data and forecast from today
-    with_answers = [ex for ex in examples if has_all_answers(ex)]
+    with_answers = sample([ex for ex in examples if has_all_answers(ex)], max_train)
     needed = set(best_for_day)
     for model in models:
         if model.name in needed:
-            log(f"retraining {model.name} on all data ...")
+            log(f"[{level}] retraining {model.name} on all data ...")
             model.train(with_answers)
 
     # The newest example of each series is "today" for that series.
@@ -145,6 +174,7 @@ def run(commodities=None, log=print):
                 Forecast(
                     commodity=series.commodity,
                     state=series.state,
+                    market_id=series.market_id,  # None for India / state series
                     model=model_name,
                     origin=ex.day,
                     target=ex.day + timedelta(days=h + 1),
@@ -154,23 +184,17 @@ def run(commodities=None, log=print):
                 )
             )
 
-    # ---- 5. save scores and forecasts (replace the old ones)
-    now = timezone.now()
-    with transaction.atomic():
-        ModelScore.objects.all().delete()
-        for name, result in results.items():
-            for h, s in enumerate(result["scores"]):
-                ModelScore.objects.create(
-                    trained_at=now, model=name, horizon=h + 1, mae=round(s["mae"], 2),
-                    mape=round(s["mape"], 3), n=s["n"], is_live=(best_for_day[h] == name),
-                )
-        Forecast.objects.all().delete()
-        Forecast.objects.bulk_create(forecasts, batch_size=2000)
-
-    # ---- 6. a readable report for the README / portfolio
+    # ---- 5. accuracy rows (saved by run()) and a readable summary
+    scores = []
+    for name, result in results.items():
+        for h, s in enumerate(result["scores"]):
+            scores.append(
+                dict(level=level, model=name, horizon=h + 1, mae=round(s["mae"], 2),
+                     mape=round(s["mape"], 3), n=s["n"], is_live=(best_for_day[h] == name))
+            )
     report = {
-        "trained_at": now.isoformat(),
         "series": len(series_list),
+        "forecasts_published": len(latest_examples),
         "train_examples": len(train),
         "test_examples": len(test),
         "best_model_per_day": best_for_day,
@@ -183,6 +207,35 @@ def run(commodities=None, log=print):
         },
         "by_day": {name: [round(s["mape"], 2) for s in r["scores"]] for name, r in results.items()},
     }
+    return scores, forecasts, report
+
+
+def run(commodities=None, log=print, mandis=True):
+    """Forecast India + states, then (optionally) single mandis, and save everything together."""
+    state_series = load_series(commodities)
+    if not state_series:
+        raise ValueError("No series with enough history yet")
+    scores, forecasts, state_report = forecast_level(state_series, ModelScore.STATE, log)
+    report = {"state": state_report}
+
+    if mandis:
+        mandi_series = load_mandi_series(commodities)
+        if mandi_series:
+            m_scores, m_forecasts, report["mandi"] = forecast_level(
+                mandi_series, ModelScore.MANDI, log, max_train=MAX_MANDI_TRAIN_EXAMPLES
+            )
+            scores += m_scores
+            forecasts += m_forecasts
+
+    # ---- save scores and forecasts (replace the old ones in one go)
+    now = timezone.now()
+    with transaction.atomic():
+        ModelScore.objects.all().delete()
+        ModelScore.objects.bulk_create([ModelScore(trained_at=now, **row) for row in scores])
+        Forecast.objects.all().delete()
+        Forecast.objects.bulk_create(forecasts, batch_size=2000)
+
+    report["trained_at"] = now.isoformat()
     settings.ARTIFACTS_DIR.mkdir(exist_ok=True)
     (settings.ARTIFACTS_DIR / "forecast_report.json").write_text(json.dumps(report, indent=2))
     return report
