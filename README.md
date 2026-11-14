@@ -24,9 +24,9 @@ Prices are shown in ₹/kg (what people think in) with ₹/quintal, the trade un
 
 | Forecast for a state | Unusual price explained |
 |---|---|
-| ![Maharashtra onion prices with a 14-day forecast and 80% range](docs/forecast.png) | ![Angul mandi flagged at 80% above Odisha's typical price](docs/anomaly.png) |
+| ![Maharashtra onion prices with a 14-day forecast and 80% range](docs/forecast.png) | ![Bagepalli mandi flagged at 39% below Karnataka's typical tomato price](docs/anomaly.png) |
 
-**Left:** click a state to see its price history and the next 14 days, with the shaded 80% likely range. **Right:** the Isolation Forest flagged Angul (Odisha) at ₹90/kg, 80% above the state's typical price and 2.1× its own recent price, and says so in plain words.
+**Left:** click a state to see its price history and the next 14 days, with the shaded 80% likely range. **Right:** the Isolation Forest flagged tomato at Bagepalli (Karnataka) at ₹11/kg, 39% below the state's typical price and 38% below its own recent price, and says so in plain words.
 
 ## How it works
 
@@ -82,9 +82,9 @@ Each mandi gets four numbers from its last 26 weeks: price vs India, weekly swin
 
 | Group | Mandis | Behaviour |
 |---|---|---|
-| Cheap · own path | 250 | 29% below India, falling ~2%/week, ignores the national price |
-| Average price · follows India | 297 | near India, rising ~4%/week, moves with the national price |
-| Dear · steady · own path | 231 | 30% above India, smaller swings |
+| Cheap · own path | 266 | 27% below India, falling ~2%/week, ignores the national price |
+| Average price · follows India | 286 | near India, rising ~4%/week, moves with the national price |
+| Dear · steady · own path | 225 | 32% above India, smaller swings |
 
 ## Syllabus coverage (B.Tech IT, Silver Oak University)
 
@@ -102,7 +102,8 @@ Real government data is messy. Rules in `prices/agmarknet.py`, each with a test:
 
 - State names spelled two ways (`Uttrakhand`/`Uttarakhand`, `Keralam`/`Kerala`) are merged so the map joins cleanly.
 - Swapped min and max columns are repaired; modal prices outside min–max are clamped.
-- Impossible prices are rejected: ₹0.01/quintal at the bottom, and at the top a **tomato price of ₹27 crore/quintal** that crashed the first loader.
+- Impossible prices are rejected: anything under ₹100/quintal (₹1/kg) at the bottom, such as ₹0.01/quintal typos and tomato at "15" (a ₹/kg price typed into the ₹/quintal column), and at the top a **tomato price of ₹27 crore/quintal** that crashed the first loader.
+- When a rule gets stricter, `drop_implausible` removes stored rows that the new rule would reject (724 of 1.44 million rows when the floor was raised). The raw API rows are kept.
 - A max price more than 10× the modal (e.g. `30002800`, where "3000" and "2800" ran together) is treated as a typo.
 - A mandi reporting several varieties counts once per day, so big mandis don't dominate state medians.
 - Mandis are placed at their district's centre with fuzzy name matching (Agmarknet writes "Palakad", the census writes "Palakkad"), handling districts that moved state after 2011 (Telangana, Ladakh).
@@ -166,6 +167,8 @@ GitHub Actions (`.github/workflows/pages.yml`) builds and publishes it to GitHub
 | `train_forecasts` | Back-test all models, publish 14-day forecasts |
 | `detect_anomalies` | Flag unusual prices |
 | `cluster_markets` | Group mandis by behaviour |
+| `drop_implausible` | Remove stored prices that today's cleaning rules reject, then rebuild summaries |
+| `export_static` | Save API answers as JSON for the hosted demo |
 
 ### API
 
