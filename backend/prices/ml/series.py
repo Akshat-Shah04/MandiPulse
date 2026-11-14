@@ -5,6 +5,10 @@ A "series" is the typical (median) price of ONE commodity in ONE state, for
 every day in order. Example: Onion in Maharashtra, 1 Apr -> 11 Nov.
 We also make one all-India series per commodity (state = "").
 
+Mandi series (one commodity at ONE mandi) are built separately, and only for
+mandis that report most days. A mandi that reports twice a week leaves too
+many gaps to forecast honestly.
+
 Mandis are closed on Sundays and holidays, so some days have no price.
 If the gap is short (7 days or less) we copy the last known price forward,
 so the models always get a complete list. We remember which days were
@@ -12,10 +16,12 @@ copied, because we must never "grade" a forecast against a copied price.
 """
 
 import math
+from datetime import timedelta
 
 import pandas as pd
+from django.db.models import Max
 
-from prices.models import AggNationalDaily, AggStateDaily
+from prices.models import AggNationalDaily, AggStateDaily, FactPrice
 
 # A series needs at least this many real days of data to be useful.
 MIN_DAYS_WITH_DATA = 90
@@ -26,13 +32,19 @@ MIN_MANDIS_PER_DAY = 2
 # Fill gaps of up to this many days by copying the last price forward.
 MAX_GAP_TO_FILL = 7
 
+# Mandi forecasts look at the last 180 days, and a mandi must have reported on
+# at least 120 of them (about 5 days a week) to get a forecast.
+MANDI_RECENT_DAYS = 180
+MIN_MANDI_REPORTING_DAYS = 120
+
 
 class PriceSeries:
-    """Daily prices for one commodity in one state."""
+    """Daily prices for one commodity in one state (or at one mandi)."""
 
-    def __init__(self, commodity, state, dates, prices, is_real):
+    def __init__(self, commodity, state, dates, prices, is_real, market_id=None):
         self.commodity = commodity  # e.g. "Onion"
         self.state = state  # e.g. "Maharashtra", or "" for all India
+        self.market_id = market_id  # set only for a mandi series
         self.dates = dates  # list of datetime.date, one per day, no gaps
         self.prices = prices  # list of float (Rs per quintal), or None if unknown
         self.is_real = is_real  # list of bool: True if a mandi really reported that day
@@ -98,6 +110,41 @@ def load_series(commodities=None):
         if rows["markets"].median() < MIN_MANDIS_PER_DAY:
             continue
         result.append(build_one_series(commodity, state, rows))
+    return result
+
+
+def read_mandi_prices(commodities=None):
+    """Each mandi's daily price over the last MANDI_RECENT_DAYS days, as a table."""
+    facts = FactPrice.objects.all()
+    if commodities:
+        facts = facts.filter(commodity__commodity__in=commodities)
+    last_day = facts.aggregate(d=Max("date__date"))["d"]
+    if last_day is None:
+        return pd.DataFrame()
+
+    first_day = last_day - timedelta(days=MANDI_RECENT_DAYS - 1)
+    rows = facts.filter(date__date__gte=first_day).values_list(
+        "commodity__commodity", "market_id", "market__state", "date__date", "modal_price"
+    )
+    table = pd.DataFrame(list(rows), columns=["commodity", "market_id", "state", "date", "median_modal"])
+    table["median_modal"] = table["median_modal"].astype(float)
+    # Some mandis report several varieties on one day; use their median, as the price chart does.
+    return table.groupby(["commodity", "market_id", "state", "date"], as_index=False)["median_modal"].median()
+
+
+def load_mandi_series(commodities=None):
+    """Return one PriceSeries per (commodity, mandi) that reports often enough to forecast."""
+    table = read_mandi_prices(commodities)
+    if table.empty:
+        return []
+
+    result = []
+    for (commodity, market_id, state), rows in table.groupby(["commodity", "market_id", "state"]):
+        if len(rows) < MIN_MANDI_REPORTING_DAYS:
+            continue  # too many missing days for an honest forecast
+        series = build_one_series(commodity, state, rows)
+        series.market_id = int(market_id)
+        result.append(series)
     return result
 
 

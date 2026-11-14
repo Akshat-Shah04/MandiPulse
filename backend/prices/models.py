@@ -188,7 +188,11 @@ class AggNationalDaily(models.Model):
 class ModelScore(models.Model):
     """Back-test accuracy of one forecasting model at one horizon."""
 
+    STATE = "state"  # all-India and state median prices
+    MANDI = "mandi"  # single mandis (noisier, scored separately)
+
     trained_at = models.DateTimeField()
+    level = models.CharField(max_length=8, default=STATE)
     model = models.CharField(max_length=32)  # naive / seasonal_naive / ridge / random_forest / lstm
     horizon = models.SmallIntegerField(help_text="days ahead")
     mae = models.FloatField(help_text="Rs/quintal")
@@ -201,10 +205,14 @@ class ModelScore(models.Model):
 
 
 class Forecast(models.Model):
-    """Published forecast: one row per series x target day. state='' = all India."""
+    """
+    Published forecast: one row per series x target day.
+    state='' and no market = all India; state only = that state; market set = that one mandi.
+    """
 
     commodity = models.CharField(max_length=96)
     state = models.CharField(max_length=64, blank=True)
+    market = models.ForeignKey(DimMarket, null=True, blank=True, on_delete=models.CASCADE, related_name="forecasts")
     model = models.CharField(max_length=32)
     origin = models.DateField(help_text="last day of data the forecast was made from")
     target = models.DateField()
@@ -214,7 +222,18 @@ class Forecast(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["commodity", "state", "target"], name="uniq_forecast")
+            # One forecast per day for India / each state ...
+            models.UniqueConstraint(
+                fields=["commodity", "state", "target"],
+                condition=models.Q(market__isnull=True),
+                name="uniq_forecast",
+            ),
+            # ... and one per day for each mandi.
+            models.UniqueConstraint(
+                fields=["commodity", "market", "target"],
+                condition=models.Q(market__isnull=False),
+                name="uniq_forecast_market",
+            ),
         ]
 
 
