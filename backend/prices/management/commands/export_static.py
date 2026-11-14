@@ -13,12 +13,13 @@ exactly the same numbers as the full app.
 
 Layout of the output folder (frontend/public/data by default):
 
-    status.json  commodities.json  models.json
+    status.json  commodities.json  models.json  models-mandi.json
     onion/dates.json  onion/groups.json
     onion/map/2026-11-11.json            one file per day
     onion/series/india.json  onion/series/state/maharashtra.json
     onion/series/market/123.json         one file per mandi
     onion/forecast/india.json  onion/forecast/state/maharashtra.json
+    onion/forecast/market/123.json       only mandis that have a forecast
 """
 
 import json
@@ -61,6 +62,7 @@ class Command(BaseCommand):
         history = options["history_days"]
         self.save("/api/status", "status.json")
         self.save("/api/models", "models.json")
+        self.save("/api/models?level=mandi", "models-mandi.json")
         commodities = self.save("/api/commodities", "commodities.json")
 
         for c in commodities:
@@ -79,7 +81,9 @@ class Command(BaseCommand):
 
             # Every state that has data for this commodity.
             states = AggStateDaily.objects.filter(commodity=name).values_list("state", flat=True).distinct()
-            forecast_states = set(Forecast.objects.filter(commodity=name).values_list("state", flat=True))
+            forecast_states = set(
+                Forecast.objects.filter(commodity=name, market__isnull=True).values_list("state", flat=True)
+            )
             for state in states:
                 self.save(
                     f"/api/series?commodity={name}&state={state}&days={history}",
@@ -94,11 +98,20 @@ class Command(BaseCommand):
                 snapshot = self.save(f"/api/map?commodity={name}&date={day['date']}", f"{folder}/map/{day['date']}.json")
                 mandis.update(m["id"] for m in snapshot["markets"])
 
+            # Mandis without a forecast get no file; the demo then shows "not enough data".
+            forecast_mandis = set(
+                Forecast.objects.filter(commodity=name, market__isnull=False).values_list("market_id", flat=True)
+            )
             for market_id in sorted(mandis):
                 self.save(
                     f"/api/series?commodity={name}&market_id={market_id}&days={history}",
                     f"{folder}/series/market/{market_id}.json",
                 )
+                if market_id in forecast_mandis:
+                    self.save(
+                        f"/api/forecast?commodity={name}&market_id={market_id}",
+                        f"{folder}/forecast/market/{market_id}.json",
+                    )
 
         latest = AggNationalDaily.objects.order_by("-date").values_list("date", flat=True).first()
         self.write("snapshot.json", {"latest_price_date": latest, "map_days": options["days"]})
