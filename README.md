@@ -4,7 +4,9 @@
 
 Built on real government open data (Agmarknet, via data.gov.in), not a toy dataset: roughly a million daily price reports from 3,000+ mandis in 30 states.
 
-![MandiPulse dashboard](docs/dashboard.png)
+**Live demo: [akshat-shah04.github.io/MandiPulse](https://akshat-shah04.github.io/MandiPulse/)** (a static snapshot of the last 30 days; no install needed)
+
+![MandiPulse dashboard](docs/map.png)
 
 ---
 
@@ -17,6 +19,14 @@ Built on real government open data (Agmarknet, via data.gov.in), not a toy datas
 - **Time travel:** a date slider replays any past day.
 
 Prices are shown in ₹/kg (what people think in) with ₹/quintal, the trade unit Agmarknet publishes, alongside.
+
+## Screenshots
+
+| Forecast for a state | Unusual price explained |
+|---|---|
+| ![Maharashtra onion prices with a 14-day forecast and 80% range](docs/forecast.png) | ![Angul mandi flagged at 80% above Odisha's typical price](docs/anomaly.png) |
+
+**Left:** click a state to see its price history and the next 14 days, with the shaded 80% likely range. **Right:** the Isolation Forest flagged Angul (Odisha) at ₹90/kg, 80% above the state's typical price and 2.1× its own recent price, and says so in plain words.
 
 ## How it works
 
@@ -135,6 +145,17 @@ npm install
 npm run dev                                            # http://localhost:3000
 ```
 
+### Build the hosted demo
+
+The live demo is the same dashboard built as a static site. `export_static` saves what each API URL returns as JSON files, and the frontend reads those instead of calling Django:
+
+```bash
+cd backend && python manage.py export_static --days 30 --history-days 180   # writes frontend/public/data
+cd ../frontend && NEXT_PUBLIC_STATIC_DATA=1 npm run build                     # static site in out/
+```
+
+GitHub Actions (`.github/workflows/pages.yml`) builds and publishes it to GitHub Pages on every push to `main`.
+
 ### Management commands
 
 | Command | What it does |
@@ -190,8 +211,14 @@ frontend/
 
 ## Data sources and licences
 
+- **Code:** MIT licence, see [LICENSE](LICENSE).
+
 - **Prices:** Agmarknet, Directorate of Marketing & Inspection, Ministry of Agriculture and Farmers Welfare, via [data.gov.in](https://www.data.gov.in/resource/variety-wise-daily-market-prices-data-commodity), under the Government Open Data License – India.
 - **Boundaries:** [DataMeet maps](https://github.com/datameet/maps) (MIT licence), based on Survey of India boundaries. State polygons from `States/Admin2`, district centres from Census-2011 districts.
+
+## Repository history
+
+I wrote the first version locally before this repository existed and pushed it as one initial commit. Changes since then are committed step by step.
 
 ---
 
