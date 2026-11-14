@@ -258,7 +258,7 @@ export default function Dashboard() {
           sub={cheapest?.state}
           tone="text-[#40e0ff]"
         />
-        <Kpi label="Dearest state" value={dearest ? kg(dearest.median_modal) : "—"} sub={dearest?.state} tone="text-hud-red" />
+        <Kpi label="Most expensive state" value={dearest ? kg(dearest.median_modal) : "—"} sub={dearest?.state} tone="text-hud-red" />
         <Kpi
           label="India, last 7 days"
           value={nationalChange === null ? "—" : `${nationalChange > 0 ? "▲" : "▼"} ${Math.abs(nationalChange).toFixed(0)}%`}
@@ -433,7 +433,7 @@ export default function Dashboard() {
                     </button>
                   </div>
                   <div>
-                    <div className="hud-label">Dearest mandi</div>
+                    <div className="hud-label">Most expensive mandi</div>
                     <button className="text-left hover:text-hud-cyan" onClick={() => setSelMarket(stateMarkets[stateMarkets.length - 1])}>
                       {stateMarkets[stateMarkets.length - 1].market}<br />
                       <span className="text-hud-red">{kg(stateMarkets[stateMarkets.length - 1].modal)}</span>
@@ -452,10 +452,10 @@ export default function Dashboard() {
             </Panel>
           )}
 
-          <Panel title="Where it's cheapest and dearest">
+          <Panel title="Where it's cheapest and most expensive">
             <div className="grid gap-4">
               <RankList title="Cheapest" rows={sorted.slice(0, 5)} onPick={pickState} />
-              <RankList title="Dearest" rows={sorted.slice(-5).reverse()} onPick={pickState} />
+              <RankList title="Most expensive" rows={sorted.slice(-5).reverse()} onPick={pickState} />
             </div>
           </Panel>
 
