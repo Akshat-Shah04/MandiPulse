@@ -119,8 +119,10 @@ def _norm_text(s: str) -> str:
     return " ".join(s.split())
 
 
-# Rs per quintal = 10 paise per kg. Anything below is a typo, not a price.
-MIN_PLAUSIBLE_PRICE = Decimal("10")
+# Rs 100 per quintal = Rs 1 per kg. Even in a glut, onion, tomato and potato
+# rarely sell below that. Lower figures in the feed are typos (Rs 0.01/quintal)
+# or Rs/kg prices typed into the Rs/quintal column (tomato "15" = Rs 15/kg).
+MIN_PLAUSIBLE_PRICE = Decimal("100")
 # Rs 1 crore per quintal = Rs 1 lakh per kg. Seen in the feed: tomato at
 # Rs 27 crore/quintal. Nothing we track trades anywhere near this.
 MAX_PLAUSIBLE_PRICE = Decimal("10000000")

@@ -54,6 +54,16 @@ class CleanTests(TestCase):
         row, _ = clean(SAMPLE | {"Min_Price": "0.01", "Max_Price": "0.01", "Modal_Price": "0.01"})
         self.assertIsNone(row)
 
+    def test_rejects_per_kg_price_in_quintal_column(self):
+        # Seen in the live feed: tomato at "15" per quintal, really Rs 15 per kg.
+        row, reason = clean(SAMPLE | {"Min_Price": "10", "Max_Price": "22", "Modal_Price": "15"})
+        self.assertIsNone(row)
+        self.assertEqual(reason, "implausibly low modal price")
+
+    def test_keeps_glut_price_of_one_rupee_per_kg(self):
+        row, _ = clean(SAMPLE | {"Min_Price": "100", "Max_Price": "150", "Modal_Price": "100"})
+        self.assertEqual(row.modal_price, Decimal("100"))
+
     def test_rejects_absurdly_high_modal(self):
         # Seen in the live feed: tomato at Rs 27 crore per quintal.
         row, reason = clean(SAMPLE | {"Min_Price": "250000000", "Max_Price": "400000000", "Modal_Price": "270000000"})
