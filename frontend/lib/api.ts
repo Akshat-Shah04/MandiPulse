@@ -47,6 +47,7 @@ export type ForecastPoint = { date: string; yhat: number; lo: number; hi: number
 export type ForecastResult = {
   commodity: string;
   state: string;
+  market_id?: number | null; // set when this is one mandi's forecast
   available: boolean;
   origin?: string;
   points: ForecastPoint[];
@@ -58,7 +59,8 @@ export type ModelScore = {
   used_for_days: number[];
   mape_by_day: number[];
 };
-export type ModelScores = { trained_at: string | null; models: ModelScore[] };
+export type ModelLevel = "state" | "mandi"; // state = India and state medians; mandi = single mandis
+export type ModelScores = { trained_at: string | null; level?: ModelLevel; models: ModelScore[] };
 
 export type MarketGroupInfo = {
   number: number;
@@ -103,8 +105,10 @@ function staticFile(path: string, params: Params): string {
     return `${folder}/series/india.json`;
   }
   if (path === "forecast") {
+    if (params.market_id !== undefined) return `${folder}/forecast/market/${params.market_id}.json`;
     return params.state ? `${folder}/forecast/state/${slug(String(params.state))}.json` : `${folder}/forecast/india.json`;
   }
+  if (path === "models" && params.level === "mandi") return "models-mandi.json";
   return `${path}.json`; // status, models, commodities
 }
 
@@ -116,9 +120,10 @@ async function getStatic<T>(path: string, params: Params, signal?: AbortSignal):
   }
   const res = await fetch(`${BASE_PATH}/data/${staticFile(path, params)}`, { signal });
   if (res.ok) return res.json() as Promise<T>;
-  // Not every state has a forecast; the API answers "not available" rather than an error.
+  // Not every state or mandi has a forecast; the API answers "not available" rather than an error.
   if (path === "forecast") {
-    return { commodity: params.commodity, state: params.state ?? "", available: false, points: [] } as T;
+    const market_id = params.market_id === undefined ? null : Number(params.market_id);
+    return { commodity: params.commodity, state: params.state ?? "", market_id, available: false, points: [] } as T;
   }
   throw new Error(`${path}: not in the demo snapshot`);
 }
@@ -139,9 +144,10 @@ export const api = {
   series: (commodity: string, opts: { state?: string; market_id?: number; days?: number } = {}, signal?: AbortSignal) =>
     get<Series>("series", { commodity, ...opts }, signal),
   status: () => get<Status>("status"),
-  forecast: (commodity: string, state?: string, signal?: AbortSignal) =>
-    get<ForecastResult>("forecast", { commodity, state }, signal),
-  models: () => get<ModelScores>("models"),
+  /** Forecast for all India (no place), one state, or one mandi. */
+  forecast: (commodity: string, place: { state?: string; market_id?: number } = {}, signal?: AbortSignal) =>
+    get<ForecastResult>("forecast", { commodity, ...place }, signal),
+  models: (level: ModelLevel = "state") => get<ModelScores>("models", { level }),
   groups: (commodity: string) => get<MarketGroups>("groups", { commodity }),
 };
 

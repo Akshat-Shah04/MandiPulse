@@ -3,10 +3,18 @@
 import { kg, modelLabel, niceDate, type ForecastResult, type MarketPrice, type ModelScores } from "@/lib/api";
 
 /** One sentence: where the price is expected to be in 14 days. */
-export function ForecastSummary({ forecast, todayPrice }: { forecast: ForecastResult | null; todayPrice: number | null }) {
+export function ForecastSummary({
+  forecast,
+  todayPrice,
+  unavailableText = "Not enough mandis here for a reliable forecast.",
+}: {
+  forecast: ForecastResult | null;
+  todayPrice: number | null;
+  unavailableText?: string; // shown when there is no forecast for this place
+}) {
   if (!forecast) return null;
   if (!forecast.available || forecast.points.length === 0) {
-    return <p className="text-[13px] text-hud-dim">Not enough mandis here for a reliable forecast.</p>;
+    return <p className="text-[13px] text-hud-dim">{unavailableText}</p>;
   }
 
   const last = forecast.points[forecast.points.length - 1];

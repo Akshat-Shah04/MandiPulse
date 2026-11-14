@@ -94,6 +94,7 @@ export default function Dashboard() {
   const [selMarket, setSelMarket] = useState<MarketPrice | null>(null);
   const [forecast, setForecast] = useState<ForecastResult | null>(null);
   const [modelScores, setModelScores] = useState<ModelScores | null>(null);
+  const [mandiScores, setMandiScores] = useState<ModelScores | null>(null);
   const [groups, setGroups] = useState<MarketGroups | null>(null);
   const [colourMode, setColourMode] = useState<ColourMode>("price");
   const [highlightGroup, setHighlightGroup] = useState<number | null>(null);
@@ -101,7 +102,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     api.status().then(setStatus).catch(() => setStatus(null));
-    api.models().then(setModelScores).catch(() => setModelScores(null));
+    api.models("state").then(setModelScores).catch(() => setModelScores(null));
+    api.models("mandi").then(setMandiScores).catch(() => setMandiScores(null));
     api
       .commodities()
       .then((list) => {
@@ -174,19 +176,24 @@ export default function Dashboard() {
   const groupOf = useMemo(() => new Map(groups?.members.map((m) => [m.market_id, m.group]) ?? []), [groups]);
   const selectedGroup = selMarket ? groups?.groups.find((g) => g.number === groupOf.get(selMarket.id)) : undefined;
 
-  // Forecast for all India, or for the selected state.
+  // Forecast for all India, the selected state, or the selected mandi.
+  const selMarketId = selMarket?.id ?? null;
   useEffect(() => {
     if (!commodity) return;
     const controller = new AbortController();
+    const place = selMarketId !== null ? { market_id: selMarketId } : { state: selState ?? undefined };
     api
-      .forecast(commodity, selState ?? undefined, controller.signal)
+      .forecast(commodity, place, controller.signal)
       .then(setForecast)
       .catch(() => {});
     return () => controller.abort();
-  }, [commodity, selState]);
+  }, [commodity, selState, selMarketId]);
 
-  // The forecast belongs to whatever the side panel is showing.
-  const forecastForPanel = forecast && forecast.state === (selState ?? "") ? forecast : null;
+  // The forecast belongs to whatever the side panel is showing (a stale one is hidden while the new one loads).
+  const forecastForPanel =
+    forecast && (selMarketId !== null ? forecast.market_id === selMarketId : !forecast.market_id && forecast.state === (selState ?? ""))
+      ? forecast
+      : null;
   const lastPoint = (series: Series | null) => series?.points[series.points.length - 1]?.median_modal ?? null;
 
   const stateRow = map?.states.find((s) => s.state === selState) ?? null;
@@ -448,7 +455,12 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="mt-4 hud-label">Price history at this mandi</div>
-              <TrendChart points={focusSeries?.points ?? []} />
+              <TrendChart points={focusSeries?.points ?? []} forecast={forecastForPanel?.points ?? []} />
+              <ForecastSummary
+                forecast={forecastForPanel}
+                todayPrice={lastPoint(focusSeries)}
+                unavailableText="This mandi doesn't report often enough for a forecast (it needs prices on 120 of the last 180 days)."
+              />
               <button onClick={() => setSelMarket(null)} className="mt-2 text-[13px] text-hud-dim underline hover:text-hud-cyan">
                 back to {selMarket.state}
               </button>
@@ -525,9 +537,18 @@ export default function Dashboard() {
           </Panel>
 
           <Panel title="How accurate is the forecast?">
-            <ModelAccuracy scores={modelScores} />
-            {selState && (
-              <p className="mt-2 text-[12px] leading-5 text-hud-dim">These scores come from testing on all-India prices.</p>
+            {selMarket ? (
+              <>
+                <p className="mb-2 text-[12px] leading-5 text-hud-cyan">Single-mandi forecasts, tested separately</p>
+                <ModelAccuracy scores={mandiScores} />
+              </>
+            ) : (
+              <>
+                <ModelAccuracy scores={modelScores} />
+                {selState && (
+                  <p className="mt-2 text-[12px] leading-5 text-hud-dim">These scores come from testing on all-India and state prices.</p>
+                )}
+              </>
             )}
           </Panel>
         </div>
