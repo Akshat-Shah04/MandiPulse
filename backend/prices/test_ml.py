@@ -7,9 +7,9 @@ from django.test import TestCase
 
 from prices.ml.anomalies import describe
 from prices.ml.examples import FORECAST_DAYS, HISTORY_DAYS, make_examples
-from prices.ml.forecasting import split_train_test
+from prices.ml.forecasting import sample, split_train_test
 from prices.ml.models import NaiveModel, SameWeekdayModel
-from prices.ml.series import PriceSeries
+from prices.ml.series import MIN_MANDI_REPORTING_DAYS, PriceSeries, load_mandi_series
 
 
 def make_series(prices, start=date(2026, 1, 1), real=None):
@@ -104,3 +104,76 @@ class ClusteringTests(TestCase):
         label, description, _ = name_group(centre, typical_swing=0.10)
         self.assertEqual(label, "Cheap · volatile · own path")
         self.assertIn("30% below India", description)
+
+
+# ---------------------------------------------------------------- mandi forecasts
+
+
+def mandi_record(market, day, price):
+    """One raw API row for a Nashik onion mandi on `day`."""
+    return {
+        "State": "Maharashtra", "District": "Nashik", "Market": market, "Commodity": "Onion",
+        "Variety": "Red", "Grade": "FAQ", "Arrival_Date": day.strftime("%d/%m/%Y"),
+        "Min_Price": str(price - 200), "Max_Price": str(price + 200), "Modal_Price": str(price),
+    }
+
+
+class MandiSeriesTests(TestCase):
+    def setUp(self):
+        from prices.agmarknet import load_records
+
+        last = date(2026, 11, 11)
+        records = []
+        # Lasalgaon reports every day for 150 days; Yeola only every third day.
+        for i in range(150):
+            day = last - timedelta(days=i)
+            records.append(mandi_record("Lasalgaon", day, 2000 + i))
+            if i % 3 == 0:
+                records.append(mandi_record("Yeola", day, 2100))
+        load_records(records, {})
+
+    def test_only_mandis_that_report_often_get_a_series(self):
+        series = load_mandi_series()
+        self.assertEqual(len(series), 1)
+        self.assertEqual(series[0].state, "Maharashtra")
+        self.assertIsNotNone(series[0].market_id)
+        self.assertGreaterEqual(sum(series[0].is_real), MIN_MANDI_REPORTING_DAYS)
+
+
+class SampleTests(TestCase):
+    def test_sample_caps_and_is_repeatable(self):
+        items = list(range(1000))
+        self.assertEqual(sample(items, 100), sample(items, 100))
+        self.assertEqual(len(sample(items, 100)), 100)
+        self.assertIs(sample(items, None), items)
+
+
+class ForecastApiTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+
+        from prices.agmarknet import load_records
+        from prices.aggregates import rebuild
+        from prices.models import DimMarket, Forecast
+
+        load_records([mandi_record("Lasalgaon", date(2026, 11, 11), 2000)], {})
+        rebuild()
+        cache.clear()
+        self.market = DimMarket.objects.get(market="Lasalgaon")
+        common = dict(commodity="Onion", model="naive", origin=date(2026, 11, 11), target=date(2026, 11, 12))
+        Forecast.objects.create(state="Maharashtra", yhat=2000, lo=1900, hi=2100, **common)
+        Forecast.objects.create(state="Maharashtra", market=self.market, yhat=2500, lo=2000, hi=3000, **common)
+
+    def test_state_forecast_ignores_mandi_rows(self):
+        body = self.client.get("/api/forecast?commodity=Onion&state=Maharashtra").json()
+        self.assertEqual([p["yhat"] for p in body["points"]], [2000])
+
+    def test_mandi_forecast(self):
+        body = self.client.get(f"/api/forecast?commodity=Onion&market_id={self.market.id}").json()
+        self.assertTrue(body["available"])
+        self.assertEqual(body["market_id"], self.market.id)
+        self.assertEqual([p["yhat"] for p in body["points"]], [2500])
+
+    def test_mandi_without_forecast_is_not_available(self):
+        body = self.client.get("/api/forecast?commodity=Onion&market_id=999999").json()
+        self.assertFalse(body["available"])

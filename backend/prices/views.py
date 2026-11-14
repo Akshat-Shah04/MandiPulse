@@ -7,8 +7,9 @@ Read-only API for the map and charts.
     GET /api/series?commodity=Onion[&state=..][&market_id=..][&days=365]
                                                       daily median modal price
     GET /api/status                                   freshness of the warehouse
-    GET /api/forecast?commodity=Onion[&state=..]      next 14 days with an 80% band
-    GET /api/models                                   back-test accuracy of each model
+    GET /api/forecast?commodity=Onion[&state=..][&market_id=..]
+                                                      next 14 days with an 80% band
+    GET /api/models[?level=mandi]                     back-test accuracy of each model
     GET /api/groups?commodity=Onion                   mandi behaviour groups (K-means) + PCA points
 
 State and national figures come from the AggStateDaily / AggNationalDaily
@@ -236,17 +237,24 @@ def status(request):
 
 @api_view(["GET"])
 def forecast(request):
-    """Published 14-day forecast for India (no state) or one state."""
+    """Published 14-day forecast for India (no state), one state, or one mandi (market_id)."""
     name = _commodity_param(request)
     state = request.query_params.get("state", "")
-    rows = Forecast.objects.filter(commodity=name, state=state).order_by("target")
+    market_id = request.query_params.get("market_id")
+    if market_id:
+        if not market_id.isdigit():
+            raise ValidationError({"market_id": "integer"})
+        rows = Forecast.objects.filter(commodity=name, market_id=int(market_id))
+    else:
+        rows = Forecast.objects.filter(commodity=name, state=state, market__isnull=True)
+    rows = rows.order_by("target")
+    key = {"commodity": name, "state": state, "market_id": int(market_id) if market_id else None}
     if not rows:
-        # Small states don't have enough mandis for a reliable forecast.
-        return Response({"commodity": name, "state": state, "available": False, "points": []})
+        # Small states, and mandis that report rarely, don't get a forecast.
+        return Response({**key, "available": False, "points": []})
     return Response(
         {
-            "commodity": name,
-            "state": state,
+            **key,
             "available": True,
             "origin": rows[0].origin,
             "points": [
@@ -259,10 +267,13 @@ def forecast(request):
 @cache_page(CACHE_SECONDS)
 @api_view(["GET"])
 def model_scores(request):
-    """How accurate each model was in the back-test, overall and day by day."""
-    scores = list(ModelScore.objects.order_by("model", "horizon"))
+    """How accurate each model was in the back-test, for state prices (default) or single mandis."""
+    level = request.query_params.get("level", ModelScore.STATE)
+    if level not in (ModelScore.STATE, ModelScore.MANDI):
+        raise ValidationError({"level": "state or mandi"})
+    scores = list(ModelScore.objects.filter(level=level).order_by("model", "horizon"))
     if not scores:
-        return Response({"trained_at": None, "models": []})
+        return Response({"trained_at": None, "level": level, "models": []})
 
     by_model = defaultdict(list)
     for s in scores:
@@ -280,7 +291,7 @@ def model_scores(request):
             }
         )
     models.sort(key=lambda m: m["mape"])
-    return Response({"trained_at": scores[0].trained_at, "models": models})
+    return Response({"trained_at": scores[0].trained_at, "level": level, "models": models})
 
 
 @cache_page(CACHE_SECONDS)
