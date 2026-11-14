@@ -8,7 +8,8 @@ const HEIGHT = 190;
 const PAD = 12;
 
 type Props = {
-  data: MarketGroups | null;
+  data: MarketGroups | null; // members may already be filtered to one state
+  place: string | null; // the chosen state, or null for all India
   highlight: number | null; // group number to emphasise, or null for all
   onHighlight: (group: number | null) => void;
   onPickMarket: (marketId: number) => void;
@@ -19,12 +20,20 @@ type Props = {
  * Top: every mandi as a dot on the PCA chart (similar mandis sit close together).
  * Bottom: each group with a plain description. Click a group to highlight it.
  */
-export default function GroupsPanel({ data, highlight, onHighlight, onPickMarket }: Props) {
+export default function GroupsPanel({ data, place, highlight, onHighlight, onPickMarket }: Props) {
   const [hovered, setHovered] = useState<GroupMember | null>(null);
 
   if (!data || data.groups.length === 0) {
     return <p className="text-[13px] text-hud-dim">Groups not computed yet for this commodity.</p>;
   }
+  if (data.members.length === 0) {
+    return <p className="text-[13px] text-hud-dim">No mandis in {place} have enough history to be grouped.</p>;
+  }
+
+  // Count members per group among the mandis shown (all India, or just the chosen state).
+  const sizeOf = new Map<number, number>();
+  for (const m of data.members) sizeOf.set(m.group, (sizeOf.get(m.group) ?? 0) + 1);
+  const shownGroups = data.groups.filter((g) => sizeOf.has(g.number));
 
   // Scale PCA coordinates into the square chart.
   const xs = data.members.map((m) => m.x);
@@ -39,8 +48,8 @@ export default function GroupsPanel({ data, highlight, onHighlight, onPickMarket
   return (
     <div>
       <p className="mb-2 text-[13px] leading-5 text-hud-dim">
-        K-means grouped {data.members.length} mandis by price level, weekly swings, recent trend and how closely
-        they follow the all-India price. Each dot is a mandi; nearby dots behave alike.
+        K-means grouped {data.members.length} mandis{place ? ` in ${place}` : ""} by price level, weekly swings,
+        recent trend and how closely they follow the all-India price. Each dot is a mandi; nearby dots behave alike.
       </p>
 
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full" onMouseLeave={() => setHovered(null)}>
@@ -68,7 +77,7 @@ export default function GroupsPanel({ data, highlight, onHighlight, onPickMarket
       </div>
 
       <ul className="mt-2 grid gap-1">
-        {data.groups.map((g) => {
+        {shownGroups.map((g) => {
           const on = highlight === g.number;
           return (
             <li key={g.number}>
@@ -81,7 +90,7 @@ export default function GroupsPanel({ data, highlight, onHighlight, onPickMarket
                   <span>
                     <span style={{ color: GROUP_COLOURS[g.number % GROUP_COLOURS.length] }}>●</span> {g.label}
                   </span>
-                  <span className="text-[12px] text-hud-dim">{g.size} mandis</span>
+                  <span className="text-[12px] text-hud-dim">{sizeOf.get(g.number)} mandis</span>
                 </div>
                 <div className="text-[12px] leading-4 text-hud-dim">{g.description}</div>
               </button>

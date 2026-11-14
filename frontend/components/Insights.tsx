@@ -44,7 +44,7 @@ export function UnusualPrices({ markets, onPick }: { markets: MarketPrice[]; onP
       <p className="mb-2 text-[13px] leading-5 text-hud-dim">
         {flagged.length === 0
           ? "No unusual prices on this day."
-          : `${flagged.length} mandi${flagged.length === 1 ? "" : "s"} reported a price far from their state and their own recent prices. Could be a data-entry error or a real local shock.`}
+          : `${flagged.length} mandi${flagged.length === 1 ? "" : "s"} reported a price far from their state's typical price and their own recent prices. Could be a data-entry error or a real local shock.`}
       </p>
       <ul className="grid gap-1">
         {flagged.slice(0, 6).map((m) => (

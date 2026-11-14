@@ -22,7 +22,6 @@ import {
   type MarketPrice,
   type PriceMap,
   type Series,
-  type StatePrice,
   type Status,
 } from "@/lib/api";
 
@@ -55,19 +54,22 @@ function changeOver(points: { date: string; median_modal: number }[], days = 7):
   return prev ? ((last.median_modal - prev.median_modal) / prev.median_modal) * 100 : null;
 }
 
-function RankList({ title, rows, onPick }: { title: string; rows: StatePrice[]; onPick: (s: string) => void }) {
+// One row in a ranking: a state (All India view) or a mandi (state view).
+type RankRow = { key: string; name: string; price: number; onPick: () => void };
+
+function RankList({ title, rows }: { title: string; rows: RankRow[] }) {
   return (
     <div>
       <div className="hud-label mb-1">{title}</div>
       <ol className="grid gap-0.5">
-        {rows.map((s) => (
-          <li key={s.state}>
+        {rows.map((r) => (
+          <li key={r.key}>
             <button
-              onClick={() => onPick(s.state)}
+              onClick={r.onPick}
               className="flex w-full items-center justify-between rounded-sm px-2 py-1 text-left text-[14px] hover:bg-hud-cyan/10"
             >
-              <span>{s.state}</span>
-              <span className="tabular-nums text-hud-text">{kg(s.median_modal)}</span>
+              <span className="truncate">{r.name}</span>
+              <span className="tabular-nums text-hud-text">{kg(r.price)}</span>
             </button>
           </li>
         ))}
@@ -202,6 +204,34 @@ export default function Dashboard() {
     setSelState(s);
     setSelMarket(null);
   };
+  const pickMarket = (m: MarketPrice) => {
+    setSelMarket(m);
+    setSelState(m.state);
+  };
+
+  // Once a state is chosen, every panel below the map describes that state, not all of India.
+  const placeName = selState ?? "India";
+  const focusChange = useMemo(() => changeOver(focusSeries?.points ?? []), [focusSeries]);
+  // For a state, reuse the backend's 7-day change so the KPI matches the State panel.
+  const weekChange = selMarket ? focusChange : selState ? (stateRow?.change_7d_pct ?? null) : nationalChange;
+  const weekPlace = selMarket ? selMarket.market : placeName;
+
+  // Rankings: states across India, or mandis inside the chosen state.
+  const rankRows: RankRow[] = selState
+    ? stateMarkets.map((m) => ({ key: String(m.id), name: m.market, price: m.modal, onPick: () => pickMarket(m) }))
+    : sorted.map((s) => ({ key: s.state, name: s.state, price: s.median_modal, onPick: () => pickState(s.state) }));
+  const lowRows = rankRows.slice(0, 5);
+  // Start after the cheapest rows so a state with few mandis never lists one twice.
+  const highRows = rankRows.slice(Math.max(lowRows.length, rankRows.length - 5)).reverse();
+
+  // Unusual prices and behaviour groups, limited to the chosen state.
+  const placeMarkets = selState ? stateMarkets : (map?.markets ?? []);
+  const placeGroups = useMemo(
+    () => (groups && selState ? { ...groups, members: groups.members.filter((m) => m.state === selState) } : groups),
+    [groups, selState],
+  );
+  const lowest = selState ? stateMarkets[0] : undefined;
+  const highest = selState ? stateMarkets[stateMarkets.length - 1] : undefined;
 
   return (
     <div className="hud-grid flex min-h-screen flex-col lg:h-full lg:min-h-0">
@@ -247,23 +277,37 @@ export default function Dashboard() {
 
       {/* ------------------------------------------------------------- KPIs */}
       <div className="grid grid-cols-2 gap-3 px-5 pt-3 lg:grid-cols-4">
+        {selState ? (
+          <>
+            <Kpi
+              label={`Typical price in ${selState} · ${day ? niceDate(day) : ""}`}
+              value={stateRow ? kg(stateRow.median_modal) : "—"}
+              sub={stateRow ? `${qtl(stateRow.median_modal)} · ${stateRow.markets} mandis reporting` : "no mandis reported on this day"}
+            />
+            <Kpi label="Cheapest mandi" value={lowest ? kg(lowest.modal) : "—"} sub={lowest?.market} tone="text-[#40e0ff]" />
+            <Kpi label="Most expensive mandi" value={highest ? kg(highest.modal) : "—"} sub={highest?.market} tone="text-hud-red" />
+          </>
+        ) : (
+          <>
+            <Kpi
+              label={`Typical price in India · ${day ? niceDate(day) : ""}`}
+              value={map ? kg(map.national_median) : "—"}
+              sub={map ? `${qtl(map.national_median)} · ${map.markets.length} mandis reporting` : undefined}
+            />
+            <Kpi
+              label="Cheapest state"
+              value={cheapest ? kg(cheapest.median_modal) : "—"}
+              sub={cheapest?.state}
+              tone="text-[#40e0ff]"
+            />
+            <Kpi label="Most expensive state" value={dearest ? kg(dearest.median_modal) : "—"} sub={dearest?.state} tone="text-hud-red" />
+          </>
+        )}
         <Kpi
-          label={`Typical price in India · ${day ? niceDate(day) : ""}`}
-          value={map ? kg(map.national_median) : "—"}
-          sub={map ? `${qtl(map.national_median)} · ${map.markets.length} mandis reporting` : undefined}
-        />
-        <Kpi
-          label="Cheapest state"
-          value={cheapest ? kg(cheapest.median_modal) : "—"}
-          sub={cheapest?.state}
-          tone="text-[#40e0ff]"
-        />
-        <Kpi label="Most expensive state" value={dearest ? kg(dearest.median_modal) : "—"} sub={dearest?.state} tone="text-hud-red" />
-        <Kpi
-          label="India, last 7 days"
-          value={nationalChange === null ? "—" : `${nationalChange > 0 ? "▲" : "▼"} ${Math.abs(nationalChange).toFixed(0)}%`}
-          sub={nationalChange === null ? "not enough history yet" : nationalChange > 0 ? "prices rising" : "prices falling"}
-          tone={nationalChange === null ? "text-hud-dim" : nationalChange > 0 ? "text-hud-amber" : "text-hud-green"}
+          label={`${weekPlace}, last 7 days`}
+          value={weekChange === null ? "—" : `${weekChange > 0 ? "▲" : "▼"} ${Math.abs(weekChange).toFixed(0)}%`}
+          sub={weekChange === null ? "not enough history yet" : weekChange > 0 ? "prices rising" : "prices falling"}
+          tone={weekChange === null ? "text-hud-dim" : weekChange > 0 ? "text-hud-amber" : "text-hud-green"}
         />
       </div>
 
@@ -305,10 +349,7 @@ export default function Dashboard() {
               selectedState={selState}
               selectedMarket={selMarket?.id ?? null}
               onSelectState={pickState}
-              onSelectMarket={(m) => {
-                setSelMarket(m);
-                setSelState(m.state);
-              }}
+              onSelectMarket={pickMarket}
               mode={colourMode}
               groupOf={groupOf}
               highlightGroup={highlightGroup}
@@ -452,26 +493,25 @@ export default function Dashboard() {
             </Panel>
           )}
 
-          <Panel title="Where it's cheapest and most expensive">
-            <div className="grid gap-4">
-              <RankList title="Cheapest" rows={sorted.slice(0, 5)} onPick={pickState} />
-              <RankList title="Most expensive" rows={sorted.slice(-5).reverse()} onPick={pickState} />
-            </div>
+          <Panel title={selState ? `Cheapest and most expensive mandis in ${selState}` : "Where it's cheapest and most expensive"}>
+            {rankRows.length === 0 ? (
+              <p className="text-[13px] text-hud-dim">No mandis in {placeName} reported on this day.</p>
+            ) : (
+              <div className="grid gap-4">
+                <RankList title="Cheapest" rows={lowRows} />
+                {highRows.length > 0 && <RankList title="Most expensive" rows={highRows} />}
+              </div>
+            )}
           </Panel>
 
-          <Panel title="Unusual prices">
-            <UnusualPrices
-              markets={map?.markets ?? []}
-              onPick={(m) => {
-                setSelMarket(m);
-                setSelState(m.state);
-              }}
-            />
+          <Panel title={selState ? `Unusual prices in ${selState}` : "Unusual prices"}>
+            <UnusualPrices markets={placeMarkets} onPick={pickMarket} />
           </Panel>
 
-          <Panel title="Mandi behaviour groups">
+          <Panel title={selState ? `Mandi behaviour groups in ${selState}` : "Mandi behaviour groups"}>
             <GroupsPanel
-              data={groups}
+              data={placeGroups}
+              place={selState}
               highlight={highlightGroup}
               onHighlight={(g) => {
                 setHighlightGroup(g);
@@ -479,16 +519,16 @@ export default function Dashboard() {
               }}
               onPickMarket={(id) => {
                 const m = map?.markets.find((x) => x.id === id);
-                if (m) {
-                  setSelMarket(m);
-                  setSelState(m.state);
-                }
+                if (m) pickMarket(m);
               }}
             />
           </Panel>
 
           <Panel title="How accurate is the forecast?">
             <ModelAccuracy scores={modelScores} />
+            {selState && (
+              <p className="mt-2 text-[12px] leading-5 text-hud-dim">These scores come from testing on all-India prices.</p>
+            )}
           </Panel>
         </div>
       </main>
