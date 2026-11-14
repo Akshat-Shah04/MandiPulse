@@ -13,7 +13,7 @@ Built on real government open data (Agmarknet, via data.gov.in), not a toy datas
 ## What it does
 
 - **Map:** each state is coloured by how its typical price compares with the national price (much cheaper → much dearer). Every mandi is a dot. Click a state to zoom in, or a mandi to see its own history.
-- **Forecast:** the next 14 days for India and for each state, with an 80% likely range, from the model that tested best for each day ahead.
+- **Forecast:** the next 14 days for India, each state and every mandi that reports most days, with an 80% likely range, from the model that tested best for each day ahead.
 - **Unusual prices:** an Isolation Forest flags mandis whose price is far from their state *and* from their own recent prices, with a plain-English reason ("39% below the state's typical price").
 - **Behaviour groups:** K-means sorts mandis into groups like *"Cheap · volatile · own path"*, shown on a PCA scatter chart and on the map.
 - **Time travel:** a date slider replays any past day.
@@ -54,21 +54,35 @@ flowchart LR
 
 ### 1. Price forecasting (14 days ahead)
 
-Five models predict `log(future price / today's price)` for each of the next 14 days:
+Five models predict `log(future price / today's price)` for each of the next 14 days. They are tested at two levels, because a single mandi's price is far noisier than a state's median.
+
+**India and states** (median price across mandis):
 
 | Model | Idea | Average error (days 1–14) |
 |---|---|---|
-| Same as today | price stays the same | **8.0%** |
-| LSTM (PyTorch) | reads the last 28 days as a sequence | 8.3% |
-| Same weekday last week | weekly pattern | 8.5% |
-| Ridge regression | lag and rolling-average features | 8.7% |
-| Random forest | same features, 300 trees | 8.7% |
+| LSTM (PyTorch) | reads the last 28 days as a sequence | **7.4%** |
+| Ridge regression | lag and rolling-average features | 7.4% |
+| Random forest | same features, 300 trees | 7.5% |
+| Same as today | price stays the same | 7.8% |
+| Same weekday last week | weekly pattern | 8.3% |
 
-*Back-tested on the last 6 weeks of 83 series (11,281 training / 3,355 test examples), as of Nov 2026.*
+*Back-tested on the last 6 weeks of 82 series (33,091 training / 3,324 test examples), as of Nov 2026.*
+
+**Single mandis** (only mandis with prices on at least 120 of the last 180 days: 1,850 mandi–commodity series):
+
+| Model | Average error (days 1–14) |
+|---|---|
+| Same as today | **9.0%** |
+| LSTM | 9.6% |
+| Ridge regression | 10.0% |
+| Same weekday last week | 10.2% |
+| Random forest | 10.3% |
+
+*64,037 test examples; training uses a fixed random sample of 40,000 examples so the random forest finishes in minutes, not hours.*
 
 **How the test works:** every model trains only on data whose answers fall *before* the test period, then forecasts from each of the last 42 days. Only real mandi reports are graded; gap-filled holiday prices are not. A unit test checks that no training answer reaches the test period.
 
-**The honest result:** the LSTM is the best model for **days 1–5**. On day 1 its error is 5.3% against 5.8% for "same as today", about 10% lower. Beyond a week, nothing beats the simple baselines yet, which is common for commodity prices. So the published forecast uses **the best model for each day ahead**: LSTM for days 1–5, baselines after that. It is never worse than the baseline. The 80% band comes from the chosen model's real test errors.
+**The honest result:** for India and states the LSTM is best for **days 1–11** (day 1: 5.0% error against 5.6% for "same as today") and ridge regression for days 12–14. For single mandis, **no model beats "price stays the same" on any day**: day-to-day noise at one mandi (a different lot, a different grade) swamps any pattern the models can learn. So a mandi's published forecast is a flat line, and the useful part is its 80% band, which shows how far that price usually moves in two weeks. The published forecast always uses **the best model for each day ahead**, so it is never worse than the baseline. The 80% band comes from the chosen model's real test errors. Mandis that report less often get no forecast and the dashboard says why.
 
 **A bug worth mentioning:** the first version gave the models the *month* as a feature. The training data covered April–August and the test covered September–November, so the models were asked about months they had never seen. Removing that feature cut the random forest's error by about 20%.
 
@@ -164,7 +178,7 @@ GitHub Actions (`.github/workflows/pages.yml`) builds and publishes it to GitHub
 | `ingest_agmarknet` | Pull prices for a date range; resumable; refreshes summaries and map positions |
 | `build_aggregates` | Rebuild the daily state/national summary tables |
 | `geocode_markets` | Place mandis at their district centre |
-| `train_forecasts` | Back-test all models, publish 14-day forecasts |
+| `train_forecasts` | Back-test all models for states and for mandis, publish 14-day forecasts (`--no-mandis` to skip mandis) |
 | `detect_anomalies` | Flag unusual prices |
 | `cluster_markets` | Group mandis by behaviour |
 | `drop_implausible` | Remove stored prices that today's cleaning rules reject, then rebuild summaries |
